@@ -1,7 +1,7 @@
 {
-  "name": "wordcount",
-  "displayName": "WordCount",
-  "description": "Example VS Code Extension with Fable",
+  "name": "displayxaml",
+  "displayName": "DisplayXaml",
+  "description": "Display WPF XAML, optionally using a ViewModel script",
   "version": "0.1.0",
   "publisher": "me",
   "license": "Unlicense",
@@ -14,7 +14,9 @@
     "Other"
   ],
   "activationEvents": [
-    "onLanguage:markdown"
+    "onLanguage:xml",
+    "onLanguage:xaml",
+    "onLanguage:fsharp"
   ],
   "scripts": {
     "build": "rollup -c",

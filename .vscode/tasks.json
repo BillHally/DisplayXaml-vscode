@@ -16,6 +16,11 @@
             "presentation": {
                 "reveal": "silent"
             }
+        },
+        {
+            "type": "npm",
+            "script": "build:watch",
+            "problemMatcher": []
         }
     ]
 }

@@ -5,4 +5,5 @@ nuget FSharp.Core
 nuget Fable.Core
 clitool dotnet-fable
 
+nuget Fable.Import.Node
 nuget Fable.Import.VSCode
