@@ -16,7 +16,7 @@ const fableOpts = {
 };
 
 export default {
-  input: './src/wordcount.fsproj',
+  input: './src/DisplayXaml-vscode.fsproj',
   output: {
     file: './out/extension.js',
     format: 'cjs',
