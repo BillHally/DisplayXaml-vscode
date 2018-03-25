@@ -1,4 +1,16 @@
-# Example VS Code Extension with Fable
+# Extension for VSCode which uses DisplayXaml to show WPF Xaml
+
+## Details
+
+TODO
+
+------------
+
+## Original documentation from inosik/fable-vscode-rollup-sample follows:
+
+-----------
+  
+### Example VS Code Extension with Fable
 
 This is the [Word Count example][example] build with [Fable][fable-home]. It's cloned from [acormier/vscode-fable-sample][upstream] and modified to work with the .NET Core 2 SDK, Rollup instead of Webpack, Paket instead of NuGet and Fable >= 1.2.0, which allows us to omit the `packages/` directory.
 
@@ -6,7 +18,7 @@ This is the [Word Count example][example] build with [Fable][fable-home]. It's c
   [fable-home]: http://fable.io/
   [upstream]: https://github.com/acormier/vscode-fable-sample
 
-## Getting Started
+#### Getting Started
 
 Run the following commands:
 
@@ -18,7 +30,7 @@ Run the following commands:
 
 Now you can open VS Code and hit <kbd>F5</kbd> to start another instance of VS Code, which will have this extension loaded and the debugger attached to it. When starting the "Launch Extension" configuration, VS Code will run the `build` NPM script, which will transpile and bundle the source code and write the resulting JavaScript code to the `out/` directory.
 
-## TODO
+#### TODO
 
 - Get the debugger to work with F# code
 
