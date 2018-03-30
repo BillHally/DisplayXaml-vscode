@@ -3,7 +3,7 @@
   "displayName": "DisplayXaml",
   "description": "Display WPF XAML, optionally using a ViewModel script",
   "version": "0.1.0",
-  "publisher": "me",
+  "publisher": "billhally",
   "license": "Unlicense",
   "private": true,
   "main": "./out/extension",
@@ -34,5 +34,14 @@
     "rollup-plugin-commonjs": "^8.2.0",
     "rollup-plugin-fable": "^1.1.0",
     "rollup-plugin-node-resolve": "^3.0.0"
+  },
+  "contributes": {
+    "commands": [{
+      "command": "displayaml.showPreview",
+      "title": "Toggle XAML Preview"
+    },{
+      "command": "displayaml.setXamlPreviewVM",
+      "title": "Set F# script to be used to create VM for XAML Preview"
+    }]
   }
 }

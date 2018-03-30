@@ -10,6 +10,12 @@ open Fable.Import.vscode
 open Fable.Import.Node
 open Fable.Import.Node.ChildProcess
 open Fable.Import.JS
+open FSharp.Collections
+open Fable.Import.vscode
+open Fable.Import.Node.Crypto
+open System
+open Fable.Import.vscodeProposed
+open System.Data.Common
 
 module Client =
     let connect (n : int) = net.connect n
@@ -29,7 +35,6 @@ module Client =
             false                
 
 let launchDisplayXaml directory (__context : ExtensionContext) : ChildProcess =
-    window.showInformationMessage (sprintf "Running DisplayXaml in: %s" directory) |> ignore //(sprintf "launchDisplayXaml: %s %A" directory __context) |> ignore
     let options = createEmpty<ExecOptions>
     options.cwd <- Some directory
     let exePath = "c:/git/DisplayXaml/DisplayXaml/bin/Debug/net471/DisplayXaml.exe" // TODO: get from the context
@@ -39,101 +44,326 @@ let launchDisplayXaml directory (__context : ExtensionContext) : ChildProcess =
     childProcess.execFile(exePath, args, options, fun _ _ _  -> ())
     //childProcess.exec(sprintf "%s --port %d" exePath port, options, fun _ _ _  -> ())
 
+let [<Literal>] ShowPreviewCommand      = "displayaml.showPreview"
+let [<Literal>] SetXamlPreviewVMCommand = "displayaml.setXamlPreviewVM"
+let [<Literal>] PlayIcon = "▶" // \u25B6
+let [<Literal>] StopIcon = "⏹" // U+23F9
+let [<Literal>] SocketErrorIcon = "⚠"
+
+type QuickPickItem = //(label, description, ?detail) =
+    // let mutable label = label
+    // let mutable description = description
+    // let mutable detail = detail
+
+    // interface Fable.Import.vscode.QuickPickItem with
+    //     member __.label with get() = label and set v = label <- v
+    //     member __.description with get () = description and set v = description <- v
+    //     member __.detail with get () = detail and set v = detail <- v
+
+    static member Create(label, ?description, ?detail) =
+//        QuickPickItem(label, defaultArg description "", ?detail=detail)
+//        :> Fable.Import.vscode.QuickPickItem
+        let mutable label       = label
+        let mutable description = defaultArg description ""
+        let mutable detail      = detail
+
+        {
+            new Fable.Import.vscode.QuickPickItem with
+                member __.label       with get() = label       and set v = label       <- v
+                member __.description with get() = description and set v = description <- v
+                member __.detail      with get() = detail      and set v = detail      <- v
+        }            
+
+[<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
+module QuickPickOptions =
+    let create placeHolder (f : QuickPickItem -> obj) =
+        let mutable matchOnDescription = None
+        let mutable matchOnDetail      = None
+        let mutable placeHolder        = Some placeHolder
+        let mutable ignoreFocusOut     = None
+
+        {
+            new Fable.Import.vscode.QuickPickOptions with
+                member __.matchOnDescription with get () = matchOnDescription and set v = matchOnDescription <- v
+                member __.matchOnDetail      with get () = matchOnDetail      and set v = matchOnDetail      <- v
+                member __.placeHolder        with get () = placeHolder        and set v = placeHolder        <- v
+                member __.ignoreFocusOut     with get () = ignoreFocusOut     and set v = ignoreFocusOut     <- v
+
+                member __.onDidSelectItem (x : U2<_, string>) : obj =
+                    match x with
+                    | U2.Case1  x -> f (x :> obj :?> QuickPickItem)
+                    | U2.Case2 __ -> null
+        }
+
+type ProgressMessage(?percentage, ?message) =
+    let mutable message    = message
+    let mutable percentage = percentage
+
+    interface Fable.Import.vscode.ProgressMessage with
+        member this.message    with get () = message    and set v = message    <- v
+        member this.percentage with get () = percentage and set v = percentage <- v
+
+type XamlFile = XamlFile of string
+type ViewModelScript = ViewModelScript of string
+
+type ConnectionStatus =
+    | Connected
+    | Disconnected
+    | SocketError
+
 let activate (context : ExtensionContext) =
     
-    let mutable status = ""
+    let mutable status = Disconnected
+    let mutable xamlViewModelScripts = Map.empty
+
     let mutable serverProcess : Option<ChildProcess> = None
+    let mutable client = None
 
-    let reportXamlStatus, hideXamlStatus =
-        let sb = window.createStatusBarItem StatusBarAlignment.Left
-        sb.text <- ""
-        fun () ->
-            sb.text <- sprintf "[DX:C%s]" (if status = "" then "" else sprintf ": %s " status)
-            sb.show()
-        , sb.hide
+    let getStatusStrings () =
+        match status with
+        | Connected -> StopIcon, "Connected"
+        | Disconnected -> PlayIcon, "Not connected"
+        | SocketError -> SocketErrorIcon, "socket error"
 
-    let reportVMStatus, hideVMStatus =
-        let sb = window.createStatusBarItem StatusBarAlignment.Left
-        sb.text <- ""
-        fun () ->
-            sb.text <- sprintf "[DX:VM%s]" (if status = "" then "" else sprintf ": %s " status)
-            sb.show()
-        , sb.hide
+    let connect () =
+        client <- Some (Client.connect 13000)
+        status <- Connected
 
-    let send =
-        let mutable client = None
-
-        let connect () =
-            status <- "Connecting..."
-            let newClient = Client.connect 13000
-            client <- Some newClient
-            status <- ""
-            newClient
-
-        let sendUsingClient c fileName x =
-            if Client.send c fileName x then
-                status <- ""
-            else            
-                // TODO: report error
-                status <- "Socket failed"
+    let send (d : TextDocument) =
+        match client with
+        | Some c ->
+            if Client.send c d.fileName (d.getText()) then
+                ()
+            else
+                status <- SocketError
                 client <- None
+        | None -> ()
 
-        fun fileName x ->
-            match client with
-            | Some client -> sendUsingClient client fileName x
-            | None ->
-                let directory = path.dirname fileName
+    let showPreview =
+        let sb = window.createStatusBarItem(StatusBarAlignment.Left, -1.0) // The progress item will use priority 0, so this will be to the right of that
+        sb.text <- ""
+        sb.command <- Some ShowPreviewCommand
 
-                if serverProcess.IsNone then
-                    let sp = launchDisplayXaml directory context
-                    sp.on(
-                        "exit",
-                        fun _ ->
-                            window.showWarningMessage("server exited") |> ignore
-                            status <- "Disconnected"
-                            serverProcess <- None
-                            client <- None
-                        ) |> ignore
-                    serverProcess <- Some sp // TODO: ensure that we don't end up with multiple copies running
+        function
+        | true  ->
+            let status, tooltipStatus = getStatusStrings ()
 
-                    async {
-                        window.showInformationMessage "Sleeping..." |> ignore
-                        do! Async.Sleep 5000
-                        window.showInformationMessage "Sending..." |> ignore
-                        let client = connect ()
-                        sendUsingClient client fileName x
-                    }
-                    |> Async.StartAsPromise
-                    |> ignore
+            sb.text    <- sprintf "%s Preview XAML" status
+            sb.tooltip <- Some (if serverProcess.IsNone then "Click to start the XAML preview" else sprintf "DisplayXaml: %s (click to stop)" tooltipStatus) 
+            sb.show ()
+        | false ->
+            sb.hide ()
+
+    let showSetXamlPreviewVM =
+        let sb = window.createStatusBarItem(StatusBarAlignment.Left, -2.0) // To the right of the "Preview XAML" button
+        sb.text <- ""
+        sb.command <- Some SetXamlPreviewVMCommand
+        
+        function
+        | Some xamlFile ->
+            let text, tooltip =
+                match xamlViewModelScripts |> Map.tryFind xamlFile with
+                | Some (ViewModelScript scriptFile) ->
+                    sprintf "VM: [%s]" (path.basename scriptFile),
+                    sprintf "Set the F# script used to create the ViewModel (currently %s)" scriptFile
+                | None ->
+                    sprintf "Set VM script",
+                    sprintf "DisplayXaml: Set the F# script to use to create the ViewModel"
+
+            sb.text    <- text
+            sb.tooltip <- Some tooltip
+            sb.show ()
+        | None ->
+            sb.hide ()
+
+    let showVMStatus =
+        let sb = window.createStatusBarItem StatusBarAlignment.Left
+        sb.text <- ""
+//        sb.command <- Some SetXamlPreviewVMCommand // TODO: select the control
+        
+        function
+        | Some viewModelScript ->
+            let status, tooltipStatus = getStatusStrings ()
+
+            let text, tooltip =
+                match xamlViewModelScripts |> Map.tryPick (fun k v -> if v = viewModelScript then Some k else None) with
+                | Some (XamlFile control) ->
+                    sprintf "XAML: %s %s" (path.basename control) status,
+                    sprintf "DisplayXaml[%s]: this F# script is used to create the ViewModel for %s" tooltipStatus control
+                | None ->
+                    sprintf "XAML: <none> %s" status,
+                    sprintf "DisplayXaml[%s]: this F# script is not currently used to create the ViewModel for any controls" tooltipStatus
+
+            sb.text    <- text
+            sb.tooltip <- Some tooltip
+            sb.show ()
+        | None ->
+            sb.hide ()
+
+    let previewXaml __ =
+        match window.activeTextEditor, serverProcess with
+        | Some e, None ->
+            let mutable title = Some "︀\u200B" // Zero-width space (an empty string results in the progress spinner being invisible)
+            window.withProgress
+                (
+                    {                                                       
+                        new ProgressOptions with
+                            member __.location with get () = ProgressLocation.Window and set _ = ()
+                            member __.title    with get () = title and set v = title <- v
+                    },
+                    (
+                        fun __ ->
+                            async {
+                                let d = e.document
+                                let directory = path.dirname d.fileName
+                                let sp = launchDisplayXaml directory context
+                                sp.on(
+                                    "exit",
+                                    fun _ ->
+                                        status        <- Disconnected
+                                        serverProcess <- None
+                                        client        <- None
+                                        window.activeTextEditor
+                                        |> Option.iter
+                                            (
+                                                fun e ->
+                                                    let d = e.document
+                                                    match d.languageId, path.extname (d.fileName.ToLowerInvariant()) with
+                                                    | "xml", ".xaml" ->
+                                                        showPreview true
+                                                        showSetXamlPreviewVM (Some (XamlFile e.document.fileName))
+                                                    | "fsharp", ".fsx" ->
+                                                        xamlViewModelScripts
+                                                        |> Seq.tryPick (fun kv -> if kv.Value = ViewModelScript d.fileName then Some (Some (ViewModelScript d.fileName)) else None)
+                                                        |> Option.iter showVMStatus
+                                                    | _, _ -> ()                                                    
+                                            )
+                                    ) |> ignore
+                                serverProcess <- Some sp
+                                status <- Connected
+                                showSetXamlPreviewVM (Some (XamlFile d.fileName))
+
+                                for i in 0..10..60 do
+                                    do! Async.Sleep 500
+    
+                                connect ()
+    
+                                send d
+    
+                                xamlViewModelScripts
+                                |> Map.tryFind (XamlFile d.fileName)
+                                |> Option.bind (fun (ViewModelScript x) -> workspace.textDocuments |> Seq.tryFind (fun d -> d.fileName = x))
+                                |> Option.iter send
+                            }
+                            |> Async.StartAsPromise
+                            |> unbox<PromiseLike<unit>>
+                    )
+                )                    
+            |> ignore
+        | _, Some server -> server.kill ""
+        | None, None -> ()
+
+        null        
+
+    let setXamlPreviewVM __ =
+        match window.activeTextEditor with
+        | Some e ->
+            let d = e.document
+            match d.languageId, path.extname (d.fileName.ToLowerInvariant()) with
+            | "xml", ".xaml" ->
+                let picks =
+                    workspace.textDocuments
+                    |> Seq.choose
+                        (
+                            fun x ->
+                                if x.languageId = "fsharp" && path.extname (x.fileName.ToLowerInvariant()) = ".fsx" then
+                                    QuickPickItem.Create (path.basename x.fileName, x.fileName)
+                                    |> Some
+                                else
+                                    None
+                        )
+                    |> Seq.append [| QuickPickItem.Create "[None]" |]            
+                    |> ResizeArray
+                    |> U2.Case1
+
+                let pickOptions =
+                    QuickPickOptions.create "Select VM F# script" (fun _ -> null)
+
+                async {
+                    let! pick =
+                        window.showQuickPick(picks, pickOptions)
+                        |> unbox<Promise<Option<vscode.QuickPickItem>>>
+                        |> Async.AwaitPromise
+
+                    match pick with
+                    | Some x ->
+                        let xamlFile = XamlFile d.fileName
+                        let vmScriptFile = ViewModelScript x.description
+                        xamlViewModelScripts <-
+                            xamlViewModelScripts
+                            |> Map.add xamlFile vmScriptFile
+
+                        showSetXamlPreviewVM (Some xamlFile)
+
+                        workspace.textDocuments
+                        |> Seq.tryFind (fun d -> d.fileName = x.description)
+                        |> Option.iter send
+                    | None -> ()
+
+                } |> Async.StartAsPromise |> ignore
+            | _, _ ->
+                window.showErrorMessage (sprintf "%s is only valid for XAML documents" SetXamlPreviewVMCommand) |> ignore
+        | None ->
+            window.showErrorMessage (sprintf "%s is only valid for XAML documents" SetXamlPreviewVMCommand) |> ignore
+
+        null
+
+    commands.registerCommand (     ShowPreviewCommand, previewXaml     , null) |> ignore
+    commands.registerCommand (SetXamlPreviewVMCommand, setXamlPreviewVM, null) |> ignore
 
     let showIfRelevant () =
         match window.activeTextEditor with
         | Some e ->
             let d = e.document
 
-            // TODO: Always treat XAML as Control, and use it to optionally specify the ViewModel script using a naming convention
-            // TODO: Optionally treat any F# script which matches the naming convention as a ViewModel script if there's a matching Control XAML file
-            // TODO: Make DisplayXaml support multiple tabs, each for a given control
-            let isFSharp = d.languageId = "fsharp"
-            let isXaml   = d.fileName.ToLowerInvariant().EndsWith ".xaml"
+            match d.languageId, path.extname (d.fileName.ToLowerInvariant()) with
+            | "xml", ".xaml" ->
+                send d
+                showPreview true
+                showSetXamlPreviewVM (Some (XamlFile d.fileName))
+                showVMStatus None
 
-            if isFSharp then
-                send d.fileName (d.getText ())               
-                hideXamlStatus ()
-                reportVMStatus ()
-            else if isXaml then
-                send d.fileName (d.getText ())                
-                hideVMStatus ()
-                reportXamlStatus ()
-            else
-                hideVMStatus ()
-                hideXamlStatus ()
+                // let vmScript =
+                //     xamlViewModelScripts
+                //     |> Map.tryFind (XamlFile d.fileName)
+                //     |> Option.bind
+                //         (
+                //             fun (ViewModelScript scriptFile) ->
+                //                 workspace.textDocuments
+                //                 |> Seq.tryFind (fun d -> d.fileName = scriptFile)
+                //         )
+
+                // showVMStatus vmScript
+            | "fsharp", ".fsx" ->            
+                xamlViewModelScripts
+                |> Seq.tryFind (fun kv -> kv.Value = ViewModelScript d.fileName)
+                |> Option.iter (fun _ -> send d)
+
+                showPreview  false
+                showSetXamlPreviewVM None
+                showVMStatus (Some (ViewModelScript d.fileName))
+            | _, _ ->
+                showPreview false
+                showSetXamlPreviewVM None
+                showVMStatus None
         | _ ->
-            hideVMStatus ()
-            hideXamlStatus ()
+            showPreview false
+            showSetXamlPreviewVM None
+            showVMStatus None
 
     showIfRelevant ()
 
     let disposables : Disposable [] = [||]
+
     window.onDidChangeActiveTextEditor    $ (showIfRelevant, (), disposables) |> ignore
     window.onDidChangeTextEditorSelection $ (showIfRelevant, (), disposables) |> ignore
