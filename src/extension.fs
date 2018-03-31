@@ -16,6 +16,7 @@ open Fable.Import.Node.Crypto
 open System
 open Fable.Import.vscodeProposed
 open System.Data.Common
+open Fable.Import.vscode
 
 module Client =
     let connect (n : int) = net.connect n
@@ -108,6 +109,7 @@ type ViewModelScript = ViewModelScript of string
 
 type ConnectionStatus =
     | Connected
+    | Launching
     | Disconnected
     | SocketError
 
@@ -121,9 +123,10 @@ let activate (context : ExtensionContext) =
 
     let getStatusStrings () =
         match status with
-        | Connected -> StopIcon, "Connected"
-        | Disconnected -> PlayIcon, "Not connected"
-        | SocketError -> SocketErrorIcon, "socket error"
+        | Connected    -> StopIcon       , "Connected"
+        | Launching    -> ""             , "Launching..."
+        | Disconnected -> PlayIcon       , "Not connected"
+        | SocketError  -> SocketErrorIcon, "Socket error"
 
     let connect () =
         client <- Some (Client.connect 13000)
@@ -214,8 +217,8 @@ let activate (context : ExtensionContext) =
                     (
                         fun __ ->
                             async {
-                                let d = e.document
-                                let directory = path.dirname d.fileName
+                                let xamlDocument = e.document
+                                let directory = path.dirname xamlDocument.fileName
                                 let sp = launchDisplayXaml directory context
                                 sp.on(
                                     "exit",
@@ -223,6 +226,7 @@ let activate (context : ExtensionContext) =
                                         status        <- Disconnected
                                         serverProcess <- None
                                         client        <- None
+
                                         window.activeTextEditor
                                         |> Option.iter
                                             (
@@ -231,7 +235,7 @@ let activate (context : ExtensionContext) =
                                                     match d.languageId, path.extname (d.fileName.ToLowerInvariant()) with
                                                     | "xml", ".xaml" ->
                                                         showPreview true
-                                                        showSetXamlPreviewVM (Some (XamlFile e.document.fileName))
+                                                        showSetXamlPreviewVM (Some (XamlFile d.fileName))
                                                     | "fsharp", ".fsx" ->
                                                         xamlViewModelScripts
                                                         |> Seq.tryPick (fun kv -> if kv.Value = ViewModelScript d.fileName then Some (Some (ViewModelScript d.fileName)) else None)
@@ -240,20 +244,26 @@ let activate (context : ExtensionContext) =
                                             )
                                     ) |> ignore
                                 serverProcess <- Some sp
-                                status <- Connected
-                                showSetXamlPreviewVM (Some (XamlFile d.fileName))
+                                status <- Launching
+                                showPreview true
+                                showSetXamlPreviewVM (Some (XamlFile xamlDocument.fileName))
 
-                                for i in 0..10..60 do
-                                    do! Async.Sleep 500
+                                // TODO: wait for the Server to tell us it is ready
+                                do! Async.Sleep 3000
     
                                 connect ()
     
-                                send d
+                                // Send the XAML document
+                                send xamlDocument
     
+                                // Send the ViewModel script (if there is one)
                                 xamlViewModelScripts
-                                |> Map.tryFind (XamlFile d.fileName)
+                                |> Map.tryFind (XamlFile xamlDocument.fileName)
                                 |> Option.bind (fun (ViewModelScript x) -> workspace.textDocuments |> Seq.tryFind (fun d -> d.fileName = x))
                                 |> Option.iter send
+
+                                status <- Connected
+                                showPreview true
                             }
                             |> Async.StartAsPromise
                             |> unbox<PromiseLike<unit>>
@@ -271,45 +281,70 @@ let activate (context : ExtensionContext) =
             let d = e.document
             match d.languageId, path.extname (d.fileName.ToLowerInvariant()) with
             | "xml", ".xaml" ->
-                let picks =
-                    workspace.textDocuments
-                    |> Seq.choose
-                        (
-                            fun x ->
-                                if x.languageId = "fsharp" && path.extname (x.fileName.ToLowerInvariant()) = ".fsx" then
-                                    QuickPickItem.Create (path.basename x.fileName, x.fileName)
-                                    |> Some
-                                else
-                                    None
-                        )
-                    |> Seq.append [| QuickPickItem.Create "[None]" |]            
-                    |> ResizeArray
-                    |> U2.Case1
-
-                let pickOptions =
-                    QuickPickOptions.create "Select VM F# script" (fun _ -> null)
-
                 async {
+                    let! files =
+                        workspace.findFiles("**/*.fsx")
+                        |> unbox<Promise<_>>
+                        |> Async.AwaitPromise
+
+                    let picks =
+                        files
+                        |> Seq.map
+                            (
+                                fun (x : Uri) ->
+                                    let file = x.fsPath
+                                    QuickPickItem.Create(path.basename file, file)
+                            )                        
+                        |> Seq.append [| QuickPickItem.Create "[None]" |]            
+                        |> ResizeArray
+                        |> U2.Case1
+
+                    let pickOptions =
+                        QuickPickOptions.create "Select VM F# script" (fun _ -> null)
+
                     let! pick =
                         window.showQuickPick(picks, pickOptions)
                         |> unbox<Promise<Option<vscode.QuickPickItem>>>
                         |> Async.AwaitPromise
 
-                    match pick with
-                    | Some x ->
-                        let xamlFile = XamlFile d.fileName
-                        let vmScriptFile = ViewModelScript x.description
-                        xamlViewModelScripts <-
-                            xamlViewModelScripts
-                            |> Map.add xamlFile vmScriptFile
+                    let promise =
+                        match pick with
+                        | Some x ->
+                            let xamlFile = XamlFile d.fileName
 
-                        showSetXamlPreviewVM (Some xamlFile)
+                            xamlViewModelScripts <-
+                                match x.description with
+                                | "" ->
+                                    // The description is empty when the user selected
+                                    // the "[None]" option - so remove the existing script (if there is one)
+                                    xamlViewModelScripts
+                                    |> Map.remove xamlFile
+                                | description ->
+                                    xamlViewModelScripts
+                                    |> Map.add xamlFile (ViewModelScript description)
 
-                        workspace.textDocuments
-                        |> Seq.tryFind (fun d -> d.fileName = x.description)
-                        |> Option.iter send
-                    | None -> ()
+                            showSetXamlPreviewVM (Some xamlFile)
 
+                            workspace.textDocuments
+                            |> Seq.tryFind (fun d -> d.fileName = x.description)
+                            |> function
+                                | Some d ->
+                                    async { return Some d } |> Async.StartAsPromise
+                                | None ->
+                                    files
+                                    |> Seq.tryFind (fun f -> f.fsPath = x.description)
+                                    |>
+                                        (
+                                            function
+                                            | None -> async { return None } |> Async.StartAsPromise
+                                            | Some uri ->
+                                                workspace.openTextDocument(uri)
+                                                |> unbox<Promise<_>>
+                                        )                                            
+                        | None -> async { return None } |> Async.StartAsPromise
+
+                    let! document = Async.AwaitPromise promise
+                    document |> Option.iter send
                 } |> Async.StartAsPromise |> ignore
             | _, _ ->
                 window.showErrorMessage (sprintf "%s is only valid for XAML documents" SetXamlPreviewVMCommand) |> ignore
