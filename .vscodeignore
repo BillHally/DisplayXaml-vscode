@@ -1,0 +1,11 @@
+.paket/**
+.vscode/**
+paket-files/**
+src/**
+.gitattributes
+.gitignore
+paket.dependencies
+paket.lock
+rollup.config.js
+yarn.lock
+*.vsix

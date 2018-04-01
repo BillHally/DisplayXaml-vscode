@@ -35,11 +35,12 @@ module Client =
         else
             false                
 
-let launchDisplayXaml directory (__context : ExtensionContext) : ChildProcess =
+let launchDisplayXaml directory (context : ExtensionContext) : ChildProcess =
     let options = createEmpty<ExecOptions>
     options.cwd <- Some directory
-    let exePath = "c:/git/DisplayXaml/DisplayXaml/bin/Debug/net471/DisplayXaml.exe" // TODO: get from the context
-    let port = 13000 // TODO: get from the context
+    let exePath = path.resolve (sprintf "%s/bin/DisplayXaml.exe" context.extensionPath)
+    //console.info (sprintf "DisplayXaml: full path to exe: %s" exePath)
+    let port = 13000 // TODO: get from the context or configuration
     let args = ResizeArray<_>([| "--port"; port.ToString() |])
     
     childProcess.execFile(exePath, args, options, fun _ _ _  -> ())
@@ -51,19 +52,8 @@ let [<Literal>] PlayIcon = "▶" // \u25B6
 let [<Literal>] StopIcon = "⏹" // U+23F9
 let [<Literal>] SocketErrorIcon = "⚠"
 
-type QuickPickItem = //(label, description, ?detail) =
-    // let mutable label = label
-    // let mutable description = description
-    // let mutable detail = detail
-
-    // interface Fable.Import.vscode.QuickPickItem with
-    //     member __.label with get() = label and set v = label <- v
-    //     member __.description with get () = description and set v = description <- v
-    //     member __.detail with get () = detail and set v = detail <- v
-
+type QuickPickItem =
     static member Create(label, ?description, ?detail) =
-//        QuickPickItem(label, defaultArg description "", ?detail=detail)
-//        :> Fable.Import.vscode.QuickPickItem
         let mutable label       = label
         let mutable description = defaultArg description ""
         let mutable detail      = detail
@@ -262,8 +252,7 @@ let activate (context : ExtensionContext) =
                                 |> Option.bind (fun (ViewModelScript x) -> workspace.textDocuments |> Seq.tryFind (fun d -> d.fileName = x))
                                 |> Option.iter send
 
-                                status <- Connected
-                                showPreview true
+                                showPreview true // Ensure that the updated status is shown to the user
                             }
                             |> Async.StartAsPromise
                             |> unbox<PromiseLike<unit>>
@@ -364,21 +353,10 @@ let activate (context : ExtensionContext) =
             match d.languageId, path.extname (d.fileName.ToLowerInvariant()) with
             | "xml", ".xaml" ->
                 send d
+
                 showPreview true
                 showSetXamlPreviewVM (Some (XamlFile d.fileName))
                 showVMStatus None
-
-                // let vmScript =
-                //     xamlViewModelScripts
-                //     |> Map.tryFind (XamlFile d.fileName)
-                //     |> Option.bind
-                //         (
-                //             fun (ViewModelScript scriptFile) ->
-                //                 workspace.textDocuments
-                //                 |> Seq.tryFind (fun d -> d.fileName = scriptFile)
-                //         )
-
-                // showVMStatus vmScript
             | "fsharp", ".fsx" ->            
                 xamlViewModelScripts
                 |> Seq.tryFind (fun kv -> kv.Value = ViewModelScript d.fileName)

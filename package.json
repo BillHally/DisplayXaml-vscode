@@ -2,8 +2,15 @@
   "name": "displayxaml",
   "displayName": "DisplayXaml",
   "description": "Display WPF XAML, optionally using a ViewModel script",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "billhally",
+  "author": {
+    "name": "Bill Hally"
+  },
+  "repository": {
+    "url": "https://github.com/BillHally/DisplayXaml-vscode",
+    "type": "git"
+  },
   "license": "Unlicense",
   "private": true,
   "main": "./out/extension",
